@@ -178,6 +178,7 @@ public class BaseClientBuilderClass implements ClassSpec {
         builder.addMethod(setOverridesMethod());
         addServiceHttpConfigIfNeeded(builder, model);
         builder.addMethod(invokePluginsMethod());
+        builder.addMethod(getSdkPluginsMethod());
         builder.addMethod(validateClientOptionsMethod());
 
 
@@ -721,23 +722,59 @@ public class BaseClientBuilderClass implements ClassSpec {
 
     private MethodSpec invokePluginsMethod() {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("invokePlugins")
-            .addAnnotation(Override.class)
-                                               .addModifiers(PROTECTED)
-                                               .addParameter(SdkClientConfiguration.class, "config")
-                                               .returns(SdkClientConfiguration.class);
-        builder.addStatement("$T plugins = plugins()",
-                             ParameterizedTypeName.get(List.class, SdkPlugin.class))
-               .beginControlFlow("if (plugins.isEmpty())")
-               .addStatement("return config")
-               .endControlFlow();
+                .addAnnotation(Override.class)
+                .addModifiers(PROTECTED)
+                .addParameter(SdkClientConfiguration.class, "config")
+                .returns(SdkClientConfiguration.class);
+
+        builder.addStatement("$T externalPlugins = plugins()",
+                ParameterizedTypeName.get(List.class, SdkPlugin.class));
+
+        builder.addStatement("$T sdkPlugins = getSdkPlugins()",
+                ParameterizedTypeName.get(List.class, SdkPlugin.class))
+                   .beginControlFlow("if (externalPlugins.isEmpty() && sdkPlugins.isEmpty())")
+                   .addStatement("return config")
+                   .endControlFlow();
+
+        builder.addStatement("$T plugins = $T.mergeLists(sdkPlugins, externalPlugins)",
+                        ParameterizedTypeName.get(List.class, SdkPlugin.class),
+                        CollectionUtils.class);
+
         builder.addStatement("$1T.BuilderInternal serviceConfigBuilder = $1T.builder(config.toBuilder())",
-                             configurationUtils.serviceClientConfigurationBuilderClassName());
+                configurationUtils.serviceClientConfigurationBuilderClassName());
         builder.addStatement("serviceConfigBuilder.overrideConfiguration(overrideConfiguration())");
         builder.beginControlFlow("for ($T plugin : plugins)", SdkPlugin.class)
-               .addStatement("plugin.configureClient(serviceConfigBuilder)")
-               .endControlFlow();
+                .addStatement("plugin.configureClient(serviceConfigBuilder)")
+                .endControlFlow();
         builder.addStatement("overrideConfiguration(serviceConfigBuilder.overrideConfiguration())");
         builder.addStatement("return serviceConfigBuilder.buildSdkClientConfiguration()");
+        return builder.build();
+    }
+
+    private MethodSpec getSdkPluginsMethod() {
+
+        ParameterizedTypeName parameterizedTypeName = ParameterizedTypeName
+                .get(ClassName.get(List.class), ClassName.get(SdkPlugin.class));
+
+        MethodSpec.Builder builder = MethodSpec.methodBuilder("getSdkPlugins")
+                .addModifiers(PROTECTED)
+                .returns(parameterizedTypeName);
+
+        builder.addStatement("$T sdkPlugins = new $T<>()",
+                ParameterizedTypeName.get(List.class, SdkPlugin.class),
+                ArrayList.class);
+
+        List<ClassName> sdkPlugins = new ArrayList<>();
+
+        for (String sdkPlugin : model.getCustomizationConfig().getSdkPlugins()) {
+            sdkPlugins.add(ClassName.bestGuess(sdkPlugin));
+        }
+
+        for (ClassName sdkPlugin : sdkPlugins) {
+            builder.addStatement("sdkPlugins.add(new $T())", sdkPlugin);
+        }
+
+        builder.addStatement("return sdkPlugins");
         return builder.build();
     }
 
